@@ -44,7 +44,13 @@ void Node::left_shift() {
   key_count -= 1;
 }
 
-std::pair<const Node*,int> BPlusTree::search(const char key, const Node* current) const {
+/**
+ * @key: chiave da ricercare all'interno del sottolbero @current
+ * La coppia <nodo, index> costituisce, in ordine, il nodo in cui è stata trovata la chiave @key e l'indice della posizione della chiave al suo interno
+*/
+std::pair<Node*,int> BPlusTree::search(const char key) const {
+  Node* current = root;
+
   if(current == nullptr) {
     current = root;
   }
@@ -63,34 +69,38 @@ std::pair<const Node*,int> BPlusTree::search(const char key, const Node* current
     i += 1;
   }
 
-  if(i < current->key_count && key == current->keys[i] ) {
+  if(i < current->key_count && key == current->keys[i] ) {  //se trova la chiave
     return {current, i};
   }
-  else {
+  else {  //altrimenti, se la chiave non è stata trovata
     return {nullptr, 0};
   }
 }
 
 /**
  * @parent: un nodo non-full
- * @child_index: indice del figlio di @parent pieno e che vogliamo dividere
+ * @child_index: indice del figlio di @parent, che deve essere un nodo pieno che vogliamo dividere
  * Divide il nodo @parent->children[@child_index] in due nodi #y e #z spostando la mediana di #y nel #parent
 */
 void BPlusTree::split_child(Node* parent, const int child_index) {
   Node* z = new Node{}; //nuovo nodo foglia
   Node* y = parent->children[child_index];  //nodo da dividere
-  z->leaf = y->leaf;
+  z->leaf = y->leaf;  //se #y è una foglia allora deve esserlo anche #z
   const int t = CORMEN_ORDER; //primo elemento dopo la mediana //FIXME bisogna essere indipendenti da questa costante simbolica
 
-  z->key_count = t - 1; //numero di figli che avrà #z
+  z->key_count = t - 1; //numero di figli che avrà #z, ovvero tutti gli elementi maggiori della mediana di #y
+
   for(int i = 0; i < z->key_count; i += 1) { //sposto le chiavi da #y -> #z
     z->keys[i] = y->keys[t+i];
   }
 
-  for(int i = 0; (!y->leaf) && i < t; i += 1) { //sposto eventualmente anche i figli
-    z->children[i] = y->children[t+i];//EDIT: c'era t-1+i
+  if(!y->leaf) {  //se è un nodo interno (router) allora sposto anche i figli
+    for(int i = 0; i < t; i += 1) {
+      z->children[i] = y->children[t+i];
+    }
   }
-  y->key_count = y->leaf ? t : t-1; //* B+Tree: se #y è foglia deve contenere anche la mediana
+
+  y->key_count = y->leaf ? t : t-1; //* B+Tree: se #y è foglia allora quest'ultimo deve contenere anche la mediana
 
   for(int i = parent->key_count; i > child_index; i -= 1) {  //shifto i children di @parent a destra per far spazio alla mediana
     parent->children[i+1] = parent->children[i];
@@ -100,7 +110,7 @@ void BPlusTree::split_child(Node* parent, const int child_index) {
   for(int i = parent->key_count-1; i >= child_index; i-= 1) { //shifto anche le chiavi di @parent
     parent->keys[i+1] = parent->keys[i];
   }
-  parent->keys[child_index] = y->keys[t-1]; //inserisco la mediana
+  parent->keys[child_index] = y->keys[t-1]; //faccio "salire" la mediana
 
   parent->key_count += 1; //ora il @parent ha una chiave in più
 
@@ -160,7 +170,8 @@ BPlusTree& BPlusTree::insert(const char key) {
 }
 
 /**
- * Elimina semplicemente una chiave in un nodo foglia
+ * Elimina semplicemente una chiave in un nodo foglia.
+ * @current deve essere necessariamente un nodo foglia!
 */
 void BPlusTree::delete_key_in_leaf(Node* current, const int key_pos) {
   for(int j = key_pos; j < current->key_count-1; j += 1) {  //eliminazione della chiave @key dal nodo foglia @current mediante traslazione
@@ -172,7 +183,7 @@ void BPlusTree::delete_key_in_leaf(Node* current, const int key_pos) {
 /**
  * @parent: genitore dei nodi vicini
  * @children_pos: indice del nodo figlio di @parent che ha meno di t-1 chiavi
- * Trasferisce una chiave da un vicino al figlio di @parent alla posizione @children_pos. Aggiorna anche il link
+ * Trasferisce una chiave da un vicino (#s) al figlio #y di @parent alla posizione @children_pos. Aggiorna anche il link
  * Precondizione: uno dei fratelli di #y ha necessariamente almeno t chiavi !
 */
 void BPlusTree::rotate(Node* parent, const int y_pos_in_parent) {
@@ -222,19 +233,18 @@ void BPlusTree::rotate(Node* parent, const int y_pos_in_parent) {
   }
 
   /**
-   * È necessario aggiornare:
-   *  - nel #parent
+   * 4. È necessario aggiornare:
+   *  - nel @parent
    *    - se lo spostamento è avvenuto a sinistra (#y a sinistra di #s), si aggiorna la chiave in #y_pos_in_parent
    *    - se lo spostamento è avvenuto a destra, si aggiorna #s_pos_in_parent
-   * - se lo spostamento è avvenuto tra nodi interni, in #y il valore della nuova chiave, presente in #y_new_key_pos
+   * - in più, se lo spostamento è avvenuto tra nodi interni, si aggiorna in #y il valore della nuova chiave appena spostata (che è presente in #y_new_key_pos)
   */
-    
   if(s_old_key_pos == 0) //spostamento avvenuto a sinistra
     update_key(parent, y_pos_in_parent);
   else
     update_key(parent, s_pos_in_parent);
 
-  if(!y->leaf) {  //spsotamento avvenuto tra nodi interni
+  if(!y->leaf) {  //spostamento avvenuto tra nodi interni
     update_key(y, y_new_key_pos);
   }
 }
@@ -256,16 +266,17 @@ void BPlusTree::update_key(Node* parent, const int child_pos) {
 
 /**
  * @parent: il genitore dei nodi che verranno fusi
- * @children_pos: posizione del figlio che ora ha un nodo in meno
- * Esegue la funzione di #y = parent->children[children_pos] con un fratello.
+ * @children_pos: posizione del figlio che ora ha una chiave in meno
+ * Esegue la funzione di #y = @parent->children[children_pos] con un fratello.
  * Precondizione: nessun fratello di #y ha almeno t chiavi
+ * Restituisce il nodo #s dove sono confluiti le chiavi di #y
 */
 Node* BPlusTree::merge(Node* parent, const int children_pos) {
   Node* y = parent->children[children_pos];
   Node* s;
   int s_new_key_pos;  //posizione in #s di dove iniziare a mettere le chiavi provenienti da #y
 
-  //1. seleziono il nodo #s
+  //1. Seleziono il nodo #s
   if(children_pos == parent->key_count) {  //se #y è l'ultimo figlio più a destra seleziono quello a sinistra
     s = parent->children[children_pos-1];
     s_new_key_pos = s->key_count;
@@ -285,7 +296,7 @@ Node* BPlusTree::merge(Node* parent, const int children_pos) {
     else {
       s->key_count += 1;
     }
-    s->keys[s_new_key_pos] = parent->keys[parent_key_pos];  //la chiave del parent "scende"
+    s->keys[s_new_key_pos] = parent->keys[parent_key_pos];  //la chiave del parent "scende" in #s
     
     if(s_new_key_pos == 0) {  //sposto anche l'ultimo figlio di #y. Se #s sta a destra di #y
       s->children[s_new_key_pos] = y->children[y->key_count];
@@ -296,11 +307,11 @@ Node* BPlusTree::merge(Node* parent, const int children_pos) {
     }
   }
 
-  //se #s si trova a destra, le chiavi provenienti da #y si posizioneranno all'inizio di #s: bisogna liberare prima dello spazio
+  //Se #s si trova a destra, le chiavi provenienti da #y si posizioneranno all'inizio di #s: bisogna liberare prima dello spazio
   if(s_new_key_pos == 0) {
     s->right_shift(y->key_count);
   }
-  //TODO dovresi aggiungere un else s->key_count += 1
+  //? dovresi aggiungere un else s->key_count += 1 ?
 
   for(int i = 0; i < y->key_count; i += 1) {  //sposto le chiavi di #y dentro #s
     s->keys[s_new_key_pos+i] = y->keys[i];
@@ -367,7 +378,7 @@ char BPlusTree::delete_helper(const char key, Node* current) {
     //<-- Si raggiunge questo punto se la chiave non viene trovata
     return 0;
   }
-  else {  //se è un nodo interno (router-link)
+  else {  //se @current è un nodo interno (router-link)
     char c = delete_helper(key, current->children[i]); //continuo la ricerca (ed eventualmente l'eliminazione) nel figlio #i-esimo
     if(current->children[i]->less_than_min_keys()) { //Caso B1: il nodo dove ho eliminato la chiave ha meno di t-1 chiavi
       if( (i > 0) && current->children[i-1]->more_than_min_keys() ||  //se un vicino di @current->children[#i] ha almeno t chiavi (minimo + 1)
@@ -379,12 +390,13 @@ char BPlusTree::delete_helper(const char key, Node* current) {
         Node* merged = merge(current, i);
 
         if(current->key_count == 0) { //se ha zero chiavi significa che era la radice. La "aggiorno"
-          root = current = merged;
+          delete current; //quindi elimino la root con zero chiavi
+          root = current = merged;  //aggiornamento
         }
       }
     }
-    if( i < current->key_count && key == current->keys[i] ) { //la chiave eliminata si trova anche nel nodo interno //FIXME dopo la merge forse non serve
-      current->keys[i] = c; //lo aggiorno con la chiave "più a destra" //TODO migliora il commento  //TODO forse è da eliminare
+    if( i < current->key_count && key == current->keys[i] ) { //la chiave eliminata si trova anche nel nodo interno
+      current->keys[i] = c; //lo aggiorno con la chiave "più a destra" //TODO migliora il commento 
     }
     return c; //faccio salire la chiave "più a destra" del nodo eliminato //TODO
   }

@@ -36,7 +36,7 @@ public:
   BPlusTree(): root{new Node{}} { };  //di default l'albero, se vuoto, possiede comunque un nodo
   BPlusTree(Node* p): root{p} { };  //DEBUG //TODO rimuovi
 
-  std::pair<const Node*,int> search(const char, const Node* = nullptr) const;
+  std::pair<Node*,int> search(const char) const;
   BPlusTree& insert(const char);
   BPlusTree& remove(const char);
 
